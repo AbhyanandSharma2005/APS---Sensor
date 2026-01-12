@@ -2,13 +2,15 @@ from SENSOR.exception import SensorException
 import os
 import sys
 
+from SENSOR.logger import logging
 
 def test_exception():
     try:
-        a = 1 / 0
+        logging.info("It will show and error after division by zero")
+        a = 1/0
     except Exception as e:
-        #raise SensorException(e, sys)
-        raise e
+        raise SensorException(e,sys)
+
 
 
 
