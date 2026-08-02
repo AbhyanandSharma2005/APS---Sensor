@@ -1,20 +1,48 @@
-from sensor.config import mongo_client
+from dotenv import load_dotenv
+import pymongo
 import pandas as pd 
 import logging
 import json
+import certifi
+import os
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
-def dump_csv_file_to_mongodb_collecton(file_path:str,database_name:str,collection_name:str)->None:
+# Load environment variables
+load_dotenv()
+
+MONGODB_URL_KEY = "MONGO_DB_URL"
+ca = certifi.where()
+
+def get_mongo_client():
+    """Get MongoDB client connection"""
     try:
+        mongo_db_url = os.getenv(MONGODB_URL_KEY)
+        if "localhost" in mongo_db_url:
+            client = pymongo.MongoClient(mongo_db_url)
+        else:
+            client = pymongo.MongoClient(mongo_db_url, tlsCAFile=ca)
+        return client
+    except Exception as e:
+        logging.error(f"Failed to connect to MongoDB: {e}")
+        raise
+
+def dump_csv_file_to_mongodb_collecton(file_path:str, database_name:str, collection_name:str)->None:
+    try:
+        client = get_mongo_client()
         df = pd.read_csv(file_path)
-        logging.info(f"rows and column {df.shape}")
+        logging.info(f"Rows and columns: {df.shape}")
 
-        df.reset_index(drop=True,inplace=True)
-        json_records=list(json.loads(df.T.to_json()).values())
+        df.reset_index(drop=True, inplace=True)
+        json_records = list(json.loads(df.T.to_json()).values())
 
-        mongo_client[database_name][collection_name].insert_many(json_records)
+        client[database_name][collection_name].insert_many(json_records)
+        logging.info(f"✅ Successfully inserted {len(json_records)} records to {database_name}.{collection_name}")
+        client.close()
     except Exception as e : 
-        print(e)
+        logging.error(f"❌ Error: {e}")
+        raise
 
 
 
