@@ -59,4 +59,4 @@ class SensorData:
             return df
 
         except Exception as e:
-            raise SensorException(e, sys)
+            raise SensorException(e, sys) No newline at end of file
