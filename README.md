@@ -5,17 +5,19 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
+[![XGBoost](https://img.shields.io/badge/XGBoost-189AB4?style=for-the-badge)](https://xgboost.readthedocs.io/)
+[![CatBoost](https://img.shields.io/badge/CatBoost-FFCC00?style=for-the-badge)](https://catboost.ai/)
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 [![AWS S3](https://img.shields.io/badge/AWS_S3-569A31?style=for-the-badge&logo=amazons3&logoColor=white)](https://aws.amazon.com/s3/)
-[![CI/CD](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white)](https://github.com/features/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
+[![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white)](https://github.com/features/actions)
 
-*A production-grade Machine Learning & MLOps system engineered to detect Air Pressure System (APS) sensor faults in Scania heavy-duty trucks—integrating MongoDB data ingestion, schema validation, automated preprocessing, cost-sensitive classification, and AWS S3 model registry.*
+*A production-grade Machine Learning & MLOps system engineered to detect Air Pressure System (APS) component failures in Scania heavy-duty trucks—minimizing asymmetric fleet maintenance costs through automated telemetry cleaning, SMOTEENN resampling, cost-sensitive classification, and AWS S3 model deployment.*
 
 <p align="center">
-  <a href="#-problem-statement">Problem Statement</a> •
+  <a href="#-problem-statement--cost-matrix">Problem Statement</a> •
+  <a href="#-dataset--exploratory-data-analysis">Dataset & EDA</a> •
   <a href="#-system-architecture--flowcharts">Architecture</a> •
-  <a href="#-pipeline-components">Pipeline Stages</a> •
+  <a href="#-mlops-pipeline-components">Pipeline Stages</a> •
   <a href="#-project-structure">Project Structure</a> •
   <a href="#-getting-started">Quick Start</a>
 </p>
@@ -24,26 +26,81 @@
 
 ---
 
-## 📌 Problem Statement
+## 📌 Problem Statement & Cost Matrix
 
-The **Air Pressure System (APS)** generates pressurized air that powers critical heavy-vehicle operations, including braking and gear changes. In fleet maintenance, distinguishing whether an imminent failure originates in the APS (`pos`) or an unrelated subsystem (`neg`) directly impacts operational cost and safety:
+The **Air Pressure System (APS)** generates pressurized air utilized across critical heavy-truck functions such as braking and gear shifting. In fleet diagnostics:
+- **Positive Class (`pos`):** Component failures originating specifically within the APS subsystem.
+- **Negative Class (`neg`):** Trucks experiencing failures in components unrelated to the APS.
 
-- **False Positives (`Cost_1 = $10`):** Trigger an unnecessary preventative inspection at a workshop.
-- **False Negatives (`Cost_2 = $500`):** Miss an actual APS defect, resulting in an unexpected roadside breakdown and expensive emergency repairs.
+Misclassifications carry a highly asymmetric financial penalty:
 
-This project packages the entire lifecycle—from **MongoDB telemetry extraction** to **AWS S3 model deployment**—into an installable, modular Python package (`SENSOR`) achieving **>96% classification accuracy** while minimizing total asymmetric maintenance costs.
+| True \ Predicted | Predicted: `Positive` (APS Fault) | Predicted: `Negative` (No APS Fault) |
+| :--- | :---: | :---: |
+| **True: `Positive`** | True Positive (`$0`) | **False Negative (`Cost_2 = $500`)** |
+| **True: `Negative`** | **False Positive (`Cost_1 = $10`)** | True Negative (`$0`) |
+
+```text
+Total_Cost = (10 × FP) + (500 × FN)
+```
+
+- **`Cost_1 ($10 — Type I Error / False Positive):`** Cost of an unnecessary preventative mechanic inspection at a workshop.
+- **`Cost_2 ($500 — Type II Error / False Negative):`** Cost of missing a faulty APS truck, leading to an unplanned roadside breakdown (**50× more expensive** than a false alarm).
+
+**Core Objective:** Minimize `Total_Cost` by aggressively suppressing False Negatives while maintaining **>96% overall classification accuracy**.
+
+---
+
+## 📊 Dataset & Exploratory Data Analysis
+
+explored in [`Notebook/Scania_APS_failure_prediction.ipynb`](Notebook/Scania_APS_failure_prediction.ipynb):
+
+- **Raw Dimensions:** `36,188 rows × 171 columns`
+- **Feature Composition:** `170` anonymized numerical telemetry features (`aa_000` through `eg_000` representing counters and histogram bins) + `1` categorical target column (`class`).
+- **Severe Class Imbalance (~35:1 Ratio):**
+  - `neg` (Majority Class): **35,188 instances** (97.24%)
+  - `pos` (Minority Class): **1,000 instances** (2.76%)
+
+### Missing Value Profiling & Feature Pruning
+Almost all sensor columns contain missing values encoded as `"na"`. Columns exceeding a **70% missingness threshold** are systematically dropped:
+
+| Dropped Feature | Missing Percentage (%) |
+| :--- | :---: |
+| `br_000` | `81.41%` |
+| `bq_000` | `80.50%` |
+| `bp_000` | `78.79%` |
+| `ab_000` | `77.09%` |
+| `cr_000` | `77.09%` |
+| `bo_000` | `76.53%` |
+| `bn_000` | `72.76%` |
+
+- **Post-Pruning Dimensions:** `36,188 rows × 164 columns`
+- **Remaining Missing Cells:** **5.37%** of total dataset cells, handled downstream via `SimpleImputer` / `KNNImputer` and `RobustScaler`.
+
+### Experimental Model Suite
+The experimentation notebook benchmarks **9 classification algorithms** under `RepeatedStratifiedKFold` and 80/20 train-test splits:
+- `XGBClassifier` (XGBoost)
+- `CatBoostClassifier` (CatBoost)
+- `RandomForestClassifier`
+- `GradientBoostingClassifier`
+- `AdaBoostClassifier`
+- `LogisticRegression`
+- `SVC` (Support Vector Classifier)
+- `KNeighborsClassifier`
+- `DecisionTreeClassifier`
+
+Each candidate model is evaluated on **Accuracy**, **F1-Score**, **Precision**, **Recall**, **ROC-AUC**, and **`Total_Cost` (`10×FP + 500×FN`)**.
 
 ---
 
 ## 🏗️ System Architecture & Flowcharts
 
-### Overall Process & Streaming Architecture
+### Overall Process Architecture
 <p align="center">
   <img src="Flowcharts/Process.png" alt="Overall Process Architecture" width="85%"/>
 </p>
 
 <details>
-<summary><b>📡 View Streaming Data Producer & Consumer Architecture (Draw.io Diagrams)</b></summary>
+<summary><b>📡 View Streaming Data Producer & Consumer Diagrams (Draw.io)</b></summary>
 <br>
 <p align="center">
   <b>Data Producer Workflow</b><br>
@@ -65,54 +122,54 @@ This project packages the entire lifecycle—from **MongoDB telemetry extraction
 
 ---
 
-## 🧩 Pipeline Components
+## 🧩 MLOps Pipeline Components
 
-The training pipeline (`SENSOR/pipeline/training_pipeline.py`) executes six sequential, decoupled components tracked via typed `config_entity.py` and `artifact_entity.py` dataclasses:
+The production package (`SENSOR/pipeline/training_pipeline.py`) orchestrates six modular stages governed by immutable configuration (`config_entity.py`) and output artifact (`artifact_entity.py`) dataclasses:
 
 ### 1. Data Ingestion (`SENSOR/components/data_ingestion.py`)
-- Connects to **MongoDB** via `SENSOR/data_access/sensor_data.py` to pull raw Scania sensor documents.
-- Converts collection records into a standardized Pandas DataFrame, replaces `'na'` literals with `np.nan`, stores a snapshot in the feature store, and performs a stratified train-test split.
+- Queries raw sensor telemetry from **MongoDB Atlas** via `SENSOR/data_access/sensor_data.py`.
+- Replaces `"na"` string tokens with `np.nan`, drops MongoDB `_id` metadata, persists a snapshot to the local Feature Store, and executes a stratified train-test split.
 
 <p align="center">
   <img src="Flowcharts/Sensor_Data%20Ingestion%20Component.png" alt="Data Ingestion Component" width="75%"/>
 </p>
 
 ### 2. Data Validation (`SENSOR/components/data_validation.py`)
-- Enforces structural integrity against `config/schema.yaml` (verifying total column counts, numerical data types, and dropped/missing attributes).
-- Performs statistical **Data Drift Detection** (Kolmogorov-Smirnov test via `scipy.stats`) between training and testing distributions, generating a validation drift report.
+- Validates train and test DataFrames against [`config/schema.yaml`](config/schema.yaml) (checking column counts, numerical types, and mandatory drop columns).
+- Runs two-sample **Kolmogorov-Smirnov (KS) Data Drift** tests (`scipy.stats.ks_2samp`) across all numerical features and exports a YAML drift report.
 
 <p align="center">
   <img src="Flowcharts/Sensor_Data%20Validation%20Component%20-Photoroom.png" alt="Data Validation Component" width="75%"/>
 </p>
 
 ### 3. Data Transformation (`SENSOR/components/data_transformation.py`)
-- Builds a reproducible preprocessing pipeline (`RobustScaler` + `SimpleImputer`) to handle extreme sensor outliers and high missingness.
-- Balances the skewed target distribution (`pos` vs. `neg`) using **SMOTEENN** (`imbalanced-learn`) and encodes labels via `TargetValueMapping`.
-- Serializes both the transformation pipeline object (`preprocessing.pkl`) and transformed `.npy` arrays.
+- Constructs a Scikit-learn `Pipeline` combining `RobustScaler` (mitigating extreme sensor outliers) and `SimpleImputer(strategy="constant", fill_value=0)`.
+- Encodes target classes (`neg` → `0`, `pos` → `1`) via `TargetValueMapping` and applies **SMOTEENN** hybrid resampling (`imbalanced-learn`) to synthesize minority fault instances and clean noisy decision boundaries.
+- Serializes the preprocessor (`preprocessing.pkl`) and transformed `.npy` arrays.
 
 <p align="center">
   <img src="Flowcharts/Sensor_Data_Transformation_Component-Photoroom.png" alt="Data Transformation Component" width="75%"/>
 </p>
 
 ### 4. Model Trainer (`SENSOR/components/model_trainer.py`)
-- Trains and tunes classifiers (`XGBoost`, `CatBoost`, `RandomForest`, `GradientBoosting`) on the transformed arrays.
-- Computes training and testing performance via `SENSOR/ml/metric/classification_metric.py` (F1-Score, Precision, Recall) and checks against the minimum accuracy threshold and overfitting tolerance.
-- Bundles the fitted preprocessor and classifier into a unified `SensorModel` estimator (`SENSOR/ml/metric/model/estimator.py`) for seamless inference.
+- Fits the gradient-boosted classifier (`XGBClassifier`) on the resampled training matrix.
+- Computes `ClassificationMetricArtifact` (`f1_score`, `precision_score`, `recall_score`), verifying that model performance exceeds the configured expected accuracy threshold and remains within overfitting tolerances.
+- Packages the fitted preprocessor and trained estimator into a unified `SensorModel` inference object (`SENSOR/ml/metric/model/estimator.py`).
 
 <p align="center">
   <img src="Flowcharts/Sensor_Model%20Trainer%20Component.png" alt="Model Trainer Component" width="75%"/>
 </p>
 
 ### 5. Model Evaluation (`SENSOR/components/model_evaluation.py`)
-- Benchmarks the newly trained model against the currently deployed production model (if one exists in the model registry).
-- Approves the candidate model only if its F1 improvement exceeds the configured `MODEL_EVALUATION_CHANGED_THRESHOLD_SCORE`.
+- Benchmarks the newly trained Challenger model against the existing Champion production model stored in `saved_models/`.
+- Approves model promotion only if the Challenger improves F1 performance beyond `MODEL_EVALUATION_CHANGED_THRESHOLD_SCORE`.
 
 <p align="center">
   <img src="Flowcharts/Sensor%20Model%20Evaluation%20Component.png" alt="Model Evaluation Component" width="75%"/>
 </p>
 
 ### 6. Model Pusher (`SENSOR/components/model_pusher.py`)
-- Promotes the approved `SensorModel` artifact to the local `saved_models/` registry and syncs artifacts/models directly to **AWS S3** via `SENSOR/cloud_storage/s3_syncer.py`.
+- Versioning-stamps the accepted `SensorModel` into the production model registry and synchronizes artifacts and models with **Amazon S3** via `SENSOR/cloud_storage/s3_syncer.py`.
 
 <p align="center">
   <img src="Flowcharts/Sensor%20Model%20Pusher%20Component.png" alt="Model Pusher Component" width="75%"/>
@@ -122,14 +179,14 @@ The training pipeline (`SENSOR/pipeline/training_pipeline.py`) executes six sequ
 
 ## 🛠️ Tech Stack
 
-| Layer | Technologies Used |
+| Layer | Technologies & Libraries |
 | :--- | :--- |
-| **Core Language** | Python 3.10+ |
-| **Machine Learning** | `scikit-learn`, `xgboost`, `catboost`, `imbalanced-learn`, `scipy` |
-| **Data Processing & Visualization** | `pandas`, `numpy`, `matplotlib`, `seaborn`, `plotly` |
-| **Database & Cloud Storage** | `pymongo` (MongoDB Atlas), `boto3` / AWS CLI (Amazon S3) |
-| **Configuration & Serialization** | `PyYAML` (`schema.yaml`), `dill` / `joblib`, `python-dotenv` |
-| **CI/CD & DevOps** | GitHub Actions (`github/workflow/main.yaml`), Docker |
+| **Language** | Python 3.10+ |
+| **Machine Learning** | `scikit-learn`, `xgboost`, `catboost`, `imbalanced-learn` (SMOTEENN), `scipy` |
+| **Data & Visualization** | `pandas`, `numpy`, `matplotlib`, `seaborn`, `plotly` |
+| **Database & Cloud** | `pymongo` (MongoDB Atlas), `boto3` & AWS CLI (Amazon S3) |
+| **Config & Packaging** | `PyYAML` (`schema.yaml`), `dill`, `python-dotenv`, `setuptools` |
+| **CI/CD & DevOps** | GitHub Actions, Docker |
 
 ---
 
@@ -138,11 +195,11 @@ The training pipeline (`SENSOR/pipeline/training_pipeline.py`) executes six sequ
 ```text
 APS---Sensor/
 ├── config/
-│   └── schema.yaml                         # Dataset column definitions & validation schema
+│   └── schema.yaml                         # Column definitions, numerical types & drop list
 ├── docs/
 │   ├── producer.drawio (2).svg             # Telemetry producer architecture diagram
 │   └── consumer.drawio (2).svg             # Telemetry consumer architecture diagram
-├── Flowcharts/                             # Component-level MLOps architecture diagrams
+├── Flowcharts/                             # Architectural & component-level MLOps diagrams
 │   ├── 0_Sensor Training Pipeline.png
 │   ├── Process.png
 │   ├── Sensor_Data Ingestion Component.png
@@ -153,48 +210,48 @@ APS---Sensor/
 │   ├── Sensor Model Pusher Component.png
 │   └── Sensor Prediction Pipeline.png
 ├── github/workflow/
-│   └── main.yaml                           # CI/CD deployment workflow
+│   └── main.yaml                           # CI/CD pipeline configuration
 ├── Notebook/
-│   └── Scania_APS_failure_prediction.ipynb # EDA, feature engineering & model experiments
-├── SENSOR/                                 # Core installable MLOps Python package
+│   └── Scania_APS_failure_prediction.ipynb # Full EDA, imputation trials & 9-model benchmark
+├── SENSOR/                                 # Installable MLOps Python package
 │   ├── __init__.py
 │   ├── config.py                           # Environment & client configuration
 │   ├── exception.py                        # Custom traceback exception handler
-│   ├── logger.py                           # Timestamped file logging utility
-│   ├── utils2.py                           # Helper utilities
+│   ├── logger.py                           # Timestamped execution logger
+│   ├── utils2.py                           # Auxiliary helper functions
 │   ├── cloud_storage/
-│   │   ├── s3_storage.py                   # Boto3 S3 operations
-│   │   └── s3_syncer.py                    # AWS S3 bucket directory synchronization
+│   │   ├── s3_storage.py                   # Boto3 S3 storage interface
+│   │   └── s3_syncer.py                    # AWS CLI bucket synchronization utility
 │   ├── components/
-│   │   ├── data_ingestion.py               # Stage 1: MongoDB extraction & splitting
-│   │   ├── data_validation.py              # Stage 2: Schema & KS-drift validation
-│   │   ├── data_transformation.py          # Stage 3: Imputation, scaling & SMOTEENN
-│   │   ├── model_trainer.py                # Stage 4: Classifier training & bundling
-│   │   ├── model_evaluation.py             # Stage 5: Champion vs. Challenger comparison
+│   │   ├── data_ingestion.py               # Stage 1: MongoDB extraction & train/test split
+│   │   ├── data_validation.py              # Stage 2: Schema validation & KS drift detection
+│   │   ├── data_transformation.py          # Stage 3: RobustScaler, Imputer & SMOTEENN
+│   │   ├── model_trainer.py                # Stage 4: Model training & SensorModel bundling
+│   │   ├── model_evaluation.py             # Stage 5: Champion vs. Challenger evaluation
 │   │   └── model_pusher.py                 # Stage 6: Model registry promotion
 │   ├── configuration/
-│   │   └── mongodb_db_connection.py        # MongoDB Atlas TLS client singleton
+│   │   └── mongodb_db_connection.py        # MongoDB Atlas connection singleton
 │   ├── constant/
-│   │   ├── application.py                  # Host/port constants
-│   │   ├── database.py                     # MongoDB database & collection names
+│   │   ├── application.py                  # App host/port constants
+│   │   ├── database.py                     # Database & collection identifiers
 │   │   ├── env_variable.py                 # Environment variable keys
-│   │   ├── s3_bucket.py                    # S3 bucket names for artifacts & models
-│   │   └── training_pipeline/__init__.py   # Pipeline thresholds, file names & directories
+│   │   ├── s3_bucket.py                    # S3 bucket names
+│   │   └── training_pipeline/__init__.py   # Pipeline file names, thresholds & constants
 │   ├── data_access/
-│   │   └── sensor_data.py                  # MongoDB collection-to-DataFrame exporter
+│   │   └── sensor_data.py                  # MongoDB-to-DataFrame data access layer
 │   ├── entity/
-│   │   ├── config_entity.py                # Component configuration dataclasses
-│   │   └── artifact_entity.py              # Component output artifact dataclasses
+│   │   ├── config_entity.py                # Pipeline stage configuration entities
+│   │   └── artifact_entity.py              # Pipeline stage output artifact entities
 │   ├── ml/metric/
-│   │   ├── classification_metric.py        # F1, Precision, Recall & cost calculators
-│   │   └── model/estimator.py              # TargetValueMapping & SensorModel wrapper
+│   │   ├── classification_metric.py        # F1, Precision & Recall metric evaluator
+│   │   └── model/estimator.py              # TargetValueMapping, SensorModel & ModelResolver
 │   ├── pipeline/
-│   │   └── training_pipeline.py            # End-to-end training pipeline orchestrator
+│   │   └── training_pipeline.py            # End-to-end pipeline orchestrator
 │   └── utils/
-│       └── main_utils.py                   # YAML, NumPy & Dill serialization helpers
-├── logs/                                   # Execution logs organized by timestamp
-├── setup.py                                # Package installation script
-├── requirements.txt                        # Python dependencies
+│       └── main_utils.py                   # YAML, NumPy & Dill object serialization utilities
+├── logs/                                   # Timestamped runtime execution logs
+├── setup.py                                # Package setup specification
+├── requirements.txt                        # Project dependencies
 └── README.md                               # Project documentation
 ```
 
@@ -208,7 +265,7 @@ git clone [https://github.com/AbhyanandSharma2005/APS---Sensor.git](https://gith
 cd APS---Sensor
 ```
 
-### 2. Create & Activate Virtual Environment
+### 2. Create & Activate a Virtual Environment
 ```bash
 # Windows (PowerShell)
 python -m venv .venv
@@ -220,7 +277,7 @@ source .venv/bin/activate
 ```
 
 ### 3. Configure Environment Variables
-Create a `.env` file in the root directory (or export in your shell) with your MongoDB and AWS credentials:
+Create a `.env` file in the project root directory with your MongoDB Atlas and AWS credentials:
 ```env
 MONGO_DB_URL="mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
 AWS_ACCESS_KEY_ID="<your-aws-access-key>"
@@ -228,25 +285,21 @@ AWS_SECRET_ACCESS_KEY="<your-aws-secret-key>"
 AWS_DEFAULT_REGION="us-east-1"
 ```
 
-### 4. Install Dependencies & Editable `SENSOR` Package
+### 4. Install Dependencies
 ```bash
 pip install -r requirements.txt
 pip install -e .
 ```
 
-### 5. Run the Training Pipeline
-Execute the main entry script to trigger data ingestion, validation, transformation, model training, evaluation, and S3 syncing:
-```bash
-python main.py
-```
-*(Or explore the full experimental workflow interactively in `Notebook/Scania_APS_failure_prediction.ipynb`.)*
-
----
-
-## 📝 Logging & Exception Handling
-
-- **Structured Execution Logs (`SENSOR/logger.py`):** Every pipeline run automatically generates a timestamped `.log` file inside the `logs/` directory tracking stage transitions, drift test outcomes, and evaluation metrics.
-- **Custom Exception Tracebacks (`SENSOR/exception.py`):** Captures the exact Python script name, line number, and error message across all pipeline stages for rapid debugging.
+### 5. Run the Project
+- **Run the Production Training Pipeline:**
+  ```bash
+  python main.py
+  ```
+- **Explore the Research & Benchmarking Notebook:**
+  ```bash
+  jupyter notebook Notebook/Scania_APS_failure_prediction.ipynb
+  ```
 
 ---
 
